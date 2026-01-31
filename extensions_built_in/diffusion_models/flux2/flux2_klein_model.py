@@ -35,13 +35,31 @@ class Flux2KleinModel(Flux2Model):
         self.use_old_lokr_format = False
 
     def load_te(self):
-        if self.flux2_klein_te_path is None:
+        # 允许从配置覆盖 TE 路径（完全离线/本地镜像场景）
+        # 不改变原有逻辑：未提供时仍使用默认的 HF repo（Qwen/Qwen3-*）
+        te_path = None
+        try:
+            # 支持几个常见 key，方便用户配置
+            # e.g. model.model_paths.text_encoder: "/models/Qwen3-8B"
+            if isinstance(self.model_config.model_paths, dict):
+                te_path = (
+                    self.model_config.model_paths.get("text_encoder")
+                    or self.model_config.model_paths.get("te")
+                    or self.model_config.model_paths.get("text_encoder_path")
+                )
+        except Exception:
+            te_path = None
+
+        if te_path is None:
+            te_path = self.flux2_klein_te_path
+
+        if te_path is None:
             raise ValueError("flux2_klein_te_path must be set for Flux2KleinModel")
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Qwen3")
 
         text_encoder: Qwen3ForCausalLM = Qwen3ForCausalLM.from_pretrained(
-            self.flux2_klein_te_path,
+            te_path,
             torch_dtype=dtype,
         )
         text_encoder.to(self.device_torch, dtype=dtype)
@@ -64,7 +82,7 @@ class Flux2KleinModel(Flux2Model):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
-        tokenizer = Qwen2Tokenizer.from_pretrained(self.flux2_klein_te_path)
+        tokenizer = Qwen2Tokenizer.from_pretrained(te_path)
         return text_encoder, tokenizer
 
 

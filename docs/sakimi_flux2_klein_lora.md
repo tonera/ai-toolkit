@@ -65,13 +65,13 @@ export SAKIMI_DATASET_DIR=/Users/zhangtao/training/sakimi
 
 ```bash
 export SAKIMI_DATASET_DIR=/Users/zhangtao/training/sakimi
-python3 /Users/zhangtao/python_project/ai-toolkit/run.py /Users/zhangtao/python_project/ai-toolkit/config/train_lora_flux2_klein_sakimi.yaml
+python run.py config/train_lora_flux2_klein_sakimi.yaml
 ```
 
 或一键脚本（会先补齐 captions 再开训）：
 
 ```bash
-bash /Users/zhangtao/python_project/ai-toolkit/scripts/train_sakimi_flux2_klein.sh
+bash scripts/train_sakimi_flux2_klein.sh
 ```
 
 ### 4) HF_TOKEN（如模型是 gated）
@@ -80,6 +80,29 @@ bash /Users/zhangtao/python_project/ai-toolkit/scripts/train_sakimi_flux2_klein.
 
 - 在项目根目录创建 `.env`
 - 写入一行：`HF_TOKEN=你的huggingface_read_token`
+
+### 4.1) （可选）完全离线训练（不从 HF 下载任何东西）
+
+你需要把以下组件都准备到本地：
+
+- **Transformer**：`flux-2-klein-base-9b.safetensors`（在你配置 `model.name_or_path` 指向的目录下）
+- **VAE**：`ae.safetensors`（同目录，或在配置里写 `model.vae_path: "/path/to/ae.safetensors"`）
+- **Text Encoder（Qwen3）**：本地目录（例如 `/path/to/Qwen3-8B`）
+
+并在 `config/train_lora_flux2_klein_sakimi.yaml` 里加入：
+
+```yaml
+model:
+  model_paths:
+    text_encoder: "/path/to/Qwen3-8B"
+```
+
+然后建议设置离线环境变量（让 transformers / HF hub 不走网络）：
+
+```bash
+export TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1
+```
 
 ### 5) 推理时触发词怎么用
 
