@@ -115,6 +115,22 @@ def inspect_lora_state_dict(state_dict: dict, *, max_examples: int = 30) -> None
 def _ensure_transformer_prefix(k: str) -> str:
     return k if k.startswith("transformer.") else f"transformer.{k}"
 
+def _clone_for_safetensors(x):
+    """
+    safetensors 不允许多个 key 共享同一底层存储（shared storage / view）。
+    这里把 tensor 变成独立 contiguous 拷贝；非 tensor 原样返回。
+    """
+    try:
+        import torch  # type: ignore
+
+        if isinstance(x, torch.Tensor):
+            # contiguous().clone() 可以同时打断 view/共享存储
+            return x.contiguous().clone()
+    except Exception:
+        # 没有 torch 的环境下，这个函数不会被用于需要 tensor 操作的分支
+        pass
+    return x
+
 
 def convert_keys_to_final_diffusers_format(state_dict: dict, *, strict: bool = False) -> "OrderedDict[str, object]":
     """
@@ -193,7 +209,8 @@ def convert_keys_to_final_diffusers_format(state_dict: dict, *, strict: bool = F
             # A: 直接复用同一个 A 到 q/k/v
             proj_keys = ["to_q", "to_k", "to_v"] if attn_type == "img_attn" else ["add_q_proj", "add_k_proj", "add_v_proj"]
             for pk in proj_keys:
-                out[_ensure_transformer_prefix(f"{attn_prefix}.{pk}.lora_A.weight")] = v
+                # 重要：不能复用同一 tensor 对象，否则 safetensors 会报 shared memory
+                out[_ensure_transformer_prefix(f"{attn_prefix}.{pk}.lora_A.weight")] = _clone_for_safetensors(v)
         else:
             # B: 按 dim=0 拆成 q/k/v
             if torch is None:
@@ -212,6 +229,10 @@ def convert_keys_to_final_diffusers_format(state_dict: dict, *, strict: bool = F
                     raise
                 print("[warn] cannot chunk fused qkv for key:", k, "error:", repr(e))
                 continue
+            # 重要：chunk 出来的是 view，依然共享存储；保存前必须 clone
+            sample_q = _clone_for_safetensors(sample_q)
+            sample_k = _clone_for_safetensors(sample_k)
+            sample_v = _clone_for_safetensors(sample_v)
             if attn_type == "img_attn":
                 out[_ensure_transformer_prefix(f"{attn_prefix}.to_q.lora_B.weight")] = sample_q
                 out[_ensure_transformer_prefix(f"{attn_prefix}.to_k.lora_B.weight")] = sample_k
