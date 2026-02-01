@@ -316,6 +316,16 @@ def main():
         return
 
     converted = convert_keys_to_final_diffusers_format(sd, strict=args.strict)
+    # 强制打断任何可能的 shared storage / view，避免 safetensors 保存报错
+    converted = OrderedDict((k, _clone_for_safetensors(v)) for k, v in converted.items())
+
+    # 自检：最终输出必须是 transformer.*，不能再包含 diffusion_model.*
+    bad = [k for k in converted.keys() if k.startswith("diffusion_model.")]
+    if bad:
+        raise RuntimeError(f"[fatal] output contains diffusion_model.* keys (should be transformer.* only): {bad[:5]}")
+    if not any(k.startswith("transformer.") for k in converted.keys()):
+        raise RuntimeError("[fatal] output contains no transformer.* keys; conversion likely failed.")
+
     info_after = _analyze_keys(list(converted.keys()))
 
     print("[inspect] after: ", info_after)
