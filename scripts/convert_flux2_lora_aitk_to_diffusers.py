@@ -257,7 +257,9 @@ def convert_keys_to_final_diffusers_format(state_dict: dict, *, strict: bool = F
                 continue
             parts = k.split(".")
             dl = parts[1]
-            lora_key = parts[-3]  # lora_A / lora_B
+            # 注意：double_blocks.0.img_attn.proj.lora_A.weight 的 split[-3] 是 "proj"（会生成错误 key）
+            # 这里必须稳定地取 lora_A / lora_B
+            lora_key = "lora_A" if k.endswith(".lora_A.weight") else "lora_B"
             out[_ensure_transformer_prefix(f"transformer_blocks.{dl}.{diff_proj}.{lora_key}.weight")] = v
 
     # 3.3 mlp mappings
@@ -277,7 +279,8 @@ def convert_keys_to_final_diffusers_format(state_dict: dict, *, strict: bool = F
                 continue
             parts = k.split(".")
             dl = parts[1]
-            lora_key = parts[-3]
+            # 注意：double_blocks.0.img_mlp.0.lora_A.weight 的 split[-3] 是 "0"（会生成错误 key）
+            lora_key = "lora_A" if k.endswith(".lora_A.weight") else "lora_B"
             out[_ensure_transformer_prefix(f"transformer_blocks.{dl}.{diff_mlp}.{lora_key}.weight")] = v
 
     # 4) 已经是 diffusers 目标结构的（例如 single_transformer_blocks/transformer_blocks 开头）就原样加 transformer. 前缀
