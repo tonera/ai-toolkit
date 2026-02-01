@@ -62,13 +62,18 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
                         for t in timesteps]
 
         # Get the weights for the timesteps
+        # NOTE: previously `timestep_type == "weighted"` was unintentionally overwritten by the
+        # linear bell-shaped weighting below due to missing `elif`. Keep the behaviors distinct:
+        # - weighted: use empirically-derived default weighing scheme (from flex.1-alpha)
+        # - v2: use half-bell scheme (flattened second half)
+        # - else: use bell-shaped mean-normalized weighting
         if timestep_type == "weighted":
             weights = torch.tensor(
                 [default_weighing_scheme[i] for i in step_indices],
                 device=timesteps.device,
-                dtype=timesteps.dtype
+                dtype=timesteps.dtype,
             )
-        if v2:
+        elif v2:
             weights = self.linear_timesteps_weights2[step_indices].flatten()
         else:
             weights = self.linear_timesteps_weights[step_indices].flatten()
