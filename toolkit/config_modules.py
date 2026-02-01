@@ -212,6 +212,16 @@ class NetworkConfig:
         
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
+
+        # LoRA 导出格式（仅影响 LoRA .safetensors 的 key 命名/结构，不影响 base 模型 save_format）
+        # - "aitk": 保持历史行为（Flux 系列会被 base_model 转成 diffusion_model.* + single_blocks/double_blocks）
+        # - "diffusers": 导出为 diffusers/PEFT 可直接 load 的 transformer.* 格式（适合直接用 diffusers 推理）
+        # - "both": 同时保存两份（*.safetensors 为 aitk 训练格式，*_diffusers.safetensors 为 diffusers 推理格式）
+        self.lora_save_format: str = kwargs.get("lora_save_format", "aitk")
+        if self.lora_save_format not in ("aitk", "diffusers", "both"):
+            raise ValueError(
+                f"network.lora_save_format must be 'aitk', 'diffusers' or 'both', got {self.lora_save_format}"
+            )
         
         # ramtorch, doesn't work yet
         self.layer_offloading = kwargs.get('layer_offloading', False)

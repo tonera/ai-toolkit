@@ -569,8 +569,23 @@ class ToolkitNetworkMixin:
 
             save_dict = new_save_dict
         
+        # Flux2：可选直接导出为 diffusers/PEFT 可直接加载的 transformer.* 格式
+        # 默认保持历史行为：交给 base_model 转为 ai-toolkit 风格（diffusion_model.* + single_blocks/double_blocks）
         if self.base_model_ref is not None:
-            save_dict = self.base_model_ref().convert_lora_weights_before_save(save_dict)
+            lora_save_format = None
+            if hasattr(self, "network_config") and self.network_config is not None:
+                lora_save_format = getattr(self.network_config, "lora_save_format", None)
+
+            if (
+                lora_save_format == "diffusers"
+                and hasattr(self, "is_flux")
+                and getattr(self, "is_flux")
+            ):
+                from toolkit.flux2_lora_export import convert_flux2_lora_to_diffusers_format
+
+                save_dict = convert_flux2_lora_to_diffusers_format(save_dict, strict=False)
+            else:
+                save_dict = self.base_model_ref().convert_lora_weights_before_save(save_dict)
         return save_dict
 
     def save_weights(
@@ -579,26 +594,52 @@ class ToolkitNetworkMixin:
             metadata=None,
             extra_state_dict: Optional[OrderedDict] = None
     ):
+        # 支持同时输出两种格式（aitk + diffusers）
+        lora_save_format = None
+        if hasattr(self, "network_config") and self.network_config is not None:
+            lora_save_format = getattr(self.network_config, "lora_save_format", None)
+
+        def _write(out_path: str, sd: OrderedDict):
+            if metadata is not None and len(metadata) == 0:
+                _meta = None
+            else:
+                _meta = metadata
+            if _meta is None:
+                _meta = OrderedDict()
+            _meta = add_model_hash_to_meta(sd, _meta)
+            if os.path.splitext(out_path)[1] == ".safetensors":
+                from safetensors.torch import save_file
+                save_file(sd, out_path, _meta)
+            else:
+                torch.save(sd, out_path)
+
+        def _with_suffix(path: str, suffix: str) -> str:
+            root, ext = os.path.splitext(path)
+            if ext.lower() == ".safetensors":
+                return f"{root}{suffix}{ext}"
+            return f"{path}{suffix}"
+
+        # both：先写 diffusers 版本，再写 aitk 版本（保证默认文件 ctime 更新更晚，断点续训更倾向选它）
+        if (
+            lora_save_format == "both"
+            and hasattr(self, "is_flux")
+            and getattr(self, "is_flux")
+        ):
+            # diffusers 导出
+            from toolkit.flux2_lora_export import convert_flux2_lora_to_diffusers_format
+
+            base_sd = self.get_state_dict(extra_state_dict=extra_state_dict, dtype=dtype)
+            diff_sd = convert_flux2_lora_to_diffusers_format(base_sd, strict=False)
+            _write(_with_suffix(file, "_diffusers"), diff_sd)
+
+            # aitk（原始）导出
+            aitk_sd = self.get_state_dict(extra_state_dict=extra_state_dict, dtype=dtype)
+            _write(file, aitk_sd)
+            return
+
         save_dict = self.get_state_dict(extra_state_dict=extra_state_dict, dtype=dtype)
         
-        if metadata is not None and len(metadata) == 0:
-            metadata = None
-
-        if metadata is None:
-            metadata = OrderedDict()
-        metadata = add_model_hash_to_meta(save_dict, metadata)
-        # let the model handle the saving
-        
-        if self.base_model_ref is not None and hasattr(self.base_model_ref(), 'save_lora'):
-            # call the base model save lora method
-            self.base_model_ref().save_lora(save_dict, file, metadata)
-            return
-        
-        if os.path.splitext(file)[1] == ".safetensors":
-            from safetensors.torch import save_file
-            save_file(save_dict, file, metadata)
-        else:
-            torch.save(save_dict, file)
+        _write(file, save_dict)
 
     def load_weights(self: Network, file, force_weight_mapping=False):
         # allows us to save and load to and from ldm weights
@@ -621,6 +662,19 @@ class ToolkitNetworkMixin:
         
         if self.base_model_ref is not None:
             weights_sd = self.base_model_ref().convert_lora_weights_before_load(weights_sd)
+
+        # 如果误加载了 diffusers 导出格式（single_transformer_blocks/transformer_blocks），为断点续训转回 single_blocks/double_blocks
+        if (
+            hasattr(self, "is_flux")
+            and getattr(self, "is_flux")
+            and any("single_transformer_blocks." in k or "transformer_blocks." in k for k in weights_sd.keys())
+            and not any("single_blocks." in k or "double_blocks." in k for k in weights_sd.keys())
+        ):
+            try:
+                from toolkit.flux2_lora_export import convert_flux2_lora_from_diffusers_format
+                weights_sd = convert_flux2_lora_from_diffusers_format(weights_sd, strict=False)
+            except Exception as e:
+                print(f"[warn] could not convert diffusers Flux2 LoRA back to training format: {e}")
 
         load_sd = OrderedDict()
         for key, value in weights_sd.items():
