@@ -1,6 +1,6 @@
 """
 把 ai-toolkit 训练导出的 Flux2/Flux2-klein LoRA 做“确定性的结构清洗”，让 diffusers 更容易加载：
-- 去掉 `diffusion_model.` / `transformer.` 等前缀
+- 保留/补齐 `diffusion_model.` 前缀（让 diffusers 识别为 ai-toolkit LoRA 并触发内部转换）
 - 把 `single_transformer_blocks.N.*` -> `single_blocks.N.*`
 - 把 `transformer_blocks.N.*` -> `double_blocks.N.*`
 
@@ -10,8 +10,8 @@
 为什么需要：
 - ai-toolkit 的 Flux2 保存 LoRA 时会把 key 从 `transformer.*` 改成 `diffusion_model.*`
   （见 `extensions_built_in/diffusion_models/flux2/flux2_model.py:convert_lora_weights_before_save`）
-- diffusers 在加载“非 diffusers 格式的 flux2 lora”时会做一次转换，
-  转换器通常期望 key 是 `single_blocks.*` / `double_blocks.*` 等（不带 `diffusion_model.` 前缀）
+- diffusers 在加载 ai-toolkit 的 Flux2 LoRA 时，会检测 `diffusion_model.` 前缀并做一次转换，
+  该转换器内部期望 `single_blocks.*` / `double_blocks.*`（随后会自动加回 `transformer.` 前缀并注册 adapter）
 
 用法：
   python scripts/convert_flux2_lora_aitk_to_diffusers.py \
@@ -23,7 +23,6 @@ import argparse
 from collections import OrderedDict
 
 import re
-from safetensors.torch import load_file, save_file
 
 
 _RE_SINGLE_TR = re.compile(r"^single_transformer_blocks\.(\d+)\.")
@@ -39,6 +38,10 @@ def _analyze_keys(keys: list[str]) -> dict:
         "has_double_blocks": any(k.startswith("double_blocks.") for k in keys),
         "has_single_transformer_blocks": any(k.startswith("single_transformer_blocks.") for k in keys),
         "has_transformer_blocks": any(k.startswith("transformer_blocks.") for k in keys),
+        "has_lora_A": any(".lora_A.weight" in k for k in keys),
+        "has_lora_B": any(".lora_B.weight" in k for k in keys),
+        "has_lora_down": any(".lora_down.weight" in k for k in keys),
+        "has_lora_up": any(".lora_up.weight" in k for k in keys),
         "has_linear1": any(".linear1." in k for k in keys),
         "has_attn_to_q": any(".attn.to_q." in k for k in keys),
     }
@@ -65,30 +68,39 @@ def convert_keys(state_dict: dict) -> "OrderedDict[str, object]":
     for k, v in state_dict.items():
         new_k = k
 
-        # 1) 去前缀
-        if new_k.startswith("diffusion_model."):
-            new_k = new_k[len("diffusion_model.") :]
+        # 1) 统一/补齐前缀：diffusers 用 `diffusion_model.` 来识别 ai-toolkit LoRA 并触发内部转换
         if new_k.startswith("transformer."):
-            new_k = new_k[len("transformer.") :]
+            new_k = "diffusion_model." + new_k[len("transformer.") :]
+        elif not new_k.startswith("diffusion_model."):
+            # 兼容你之前用旧脚本已经“去前缀”的情况：把前缀补回来
+            new_k = "diffusion_model." + new_k
 
         # 2) blocks 命名对齐到 comfy 风格（diffusers 的 flux2 非diffusers转换器会吃这个）
+        prefix = "diffusion_model."
+        body = new_k[len(prefix) :] if new_k.startswith(prefix) else new_k
+
         # single_transformer_blocks.N.xxx -> single_blocks.N.xxx
-        m = _RE_SINGLE_TR.match(new_k)
+        m = _RE_SINGLE_TR.match(body)
         if m:
-            new_k = "single_blocks." + new_k[len(f"single_transformer_blocks.{m.group(1)}.") - 0 :]
+            body = "single_blocks." + body[len(f"single_transformer_blocks.{m.group(1)}.") - 0 :]
             # 上面拼接会重复 N，修正一下
-            new_k = f"single_blocks.{m.group(1)}." + new_k.split(".", 2)[2]
+            body = f"single_blocks.{m.group(1)}." + body.split(".", 2)[2]
 
         # transformer_blocks.N.xxx -> double_blocks.N.xxx
-        m = _RE_DOUBLE_TR.match(new_k)
+        m = _RE_DOUBLE_TR.match(body)
         if m:
-            new_k = f"double_blocks.{m.group(1)}." + new_k.split(".", 2)[2]
+            body = f"double_blocks.{m.group(1)}." + body.split(".", 2)[2]
+
+        new_k = prefix + body if prefix else body
 
         out[new_k] = v
     return out
 
 
 def main():
+    # 延迟导入：避免在仅做 key 转换/单测导入该模块时强依赖 torch
+    from safetensors.torch import load_file, save_file
+
     p = argparse.ArgumentParser()
     p.add_argument("--in", dest="input_path", required=True, help="input .safetensors lora path")
     p.add_argument("--out", dest="output_path", required=True, help="output .safetensors path")
