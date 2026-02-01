@@ -33,25 +33,26 @@ _RE_DOUBLE_BLOCKS = re.compile(r"^double_blocks\.(\d+)\.")
 
 
 def _analyze_keys(keys: list[str]) -> dict:
+    base_keys = [_strip_known_prefix(k) for k in keys]
     info = {
         "count": len(keys),
         "has_diffusion_model_prefix": any(k.startswith("diffusion_model.") for k in keys),
         "has_transformer_prefix": any(k.startswith("transformer.") for k in keys),
-        "has_single_blocks": any(k.startswith("single_blocks.") for k in keys),
-        "has_double_blocks": any(k.startswith("double_blocks.") for k in keys),
-        "has_single_transformer_blocks": any(k.startswith("single_transformer_blocks.") for k in keys),
-        "has_transformer_blocks": any(k.startswith("transformer_blocks.") for k in keys),
-        "has_lora_A": any(".lora_A.weight" in k for k in keys),
-        "has_lora_B": any(".lora_B.weight" in k for k in keys),
-        "has_lora_down": any(".lora_down.weight" in k for k in keys),
-        "has_lora_up": any(".lora_up.weight" in k for k in keys),
-        "has_linear1": any(".linear1." in k for k in keys),
-        "has_attn_to_q": any(".attn.to_q." in k for k in keys),
+        "has_single_blocks": any(k.startswith("single_blocks.") for k in base_keys),
+        "has_double_blocks": any(k.startswith("double_blocks.") for k in base_keys),
+        "has_single_transformer_blocks": any(k.startswith("single_transformer_blocks.") for k in base_keys),
+        "has_transformer_blocks": any(k.startswith("transformer_blocks.") for k in base_keys),
+        "has_lora_A": any(".lora_A.weight" in k for k in base_keys),
+        "has_lora_B": any(".lora_B.weight" in k for k in base_keys),
+        "has_lora_down": any(".lora_down.weight" in k for k in base_keys),
+        "has_lora_up": any(".lora_up.weight" in k for k in base_keys),
+        "has_linear1": any(".linear1." in k for k in base_keys),
+        "has_attn_to_q": any(".attn.to_q." in k for k in base_keys),
     }
     # block index ranges
     def max_idx(prefix: str) -> int | None:
         idxs = []
-        for k in keys:
+        for k in base_keys:
             if k.startswith(prefix):
                 try:
                     idxs.append(int(k.split(".")[1]))
