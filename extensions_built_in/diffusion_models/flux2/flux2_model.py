@@ -22,7 +22,8 @@ from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
 from .src.autoencoder import AutoEncoder, AutoEncoderParams
-from safetensors.torch import load_file, save_file
+from safetensors.torch import save_file
+from toolkit.safetensors_utils import safe_load_file
 from PIL import Image
 import torch.nn.functional as F
 
@@ -147,7 +148,7 @@ class Flux2Model(BaseModel):
                 token=HF_TOKEN,
             )
 
-        transformer_state_dict = load_file(transformer_path, device="cpu")
+        transformer_state_dict = safe_load_file(transformer_path, device="cpu")
 
         # cast to dtype
         for key in transformer_state_dict:
@@ -203,7 +204,7 @@ class Flux2Model(BaseModel):
         with torch.device("meta"):
             vae = AutoEncoder(AutoEncoderParams())
 
-        vae_state_dict = load_file(vae_path, device="cpu")
+        vae_state_dict = safe_load_file(vae_path, device="cpu")
 
         # cast to dtype
         for key in vae_state_dict:

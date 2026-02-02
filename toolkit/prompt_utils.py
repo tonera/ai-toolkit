@@ -2,7 +2,8 @@ import os
 from typing import Optional, TYPE_CHECKING, List, Union, Tuple
 
 import torch
-from safetensors.torch import load_file, save_file
+from safetensors.torch import save_file
+from toolkit.safetensors_utils import safe_load_file
 from tqdm import tqdm
 import random
 
@@ -145,7 +146,7 @@ class PromptEmbeds:
         :param path: The path to load the prompt embeds from.
         :return: An instance of PromptEmbeds.
         """
-        state_dict = load_file(path, device='cpu')
+        state_dict = safe_load_file(path, device='cpu')
         text_embeds = []
         pooled_embeds = None
         attention_mask = []
@@ -539,7 +540,7 @@ def encode_prompts_to_cache(
         if os.path.exists(prompt_tensor_file):
             # load it.
             print(f"Loading prompt tensors from {prompt_tensor_file}")
-            prompt_tensors = load_file(prompt_tensor_file, device='cpu')
+            prompt_tensors = safe_load_file(prompt_tensor_file, device='cpu')
             # add them to the cache
             for prompt_txt, prompt_tensor in tqdm(prompt_tensors.items(), desc="Loading prompts", leave=False):
                 if prompt_txt.startswith("te:"):

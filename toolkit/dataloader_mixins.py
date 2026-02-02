@@ -12,7 +12,8 @@ import traceback
 import cv2
 import numpy as np
 import torch
-from safetensors.torch import load_file, save_file
+from safetensors.torch import save_file
+from toolkit.safetensors_utils import safe_load_file
 from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
@@ -1187,12 +1188,12 @@ class ClipImageFileItemDTOMixin:
         if self.clip_image_processor is None:
             is_dynamic_size_and_aspect = True # serving it raw
         if self.is_vision_clip_cached:
-            self.clip_image_embeds = load_file(self.get_clip_vision_embeddings_path())
+            self.clip_image_embeds = safe_load_file(self.get_clip_vision_embeddings_path())
 
             # get a random unconditional image
             if self.clip_vision_unconditional_paths is not None:
                 unconditional_path = random.choice(self.clip_vision_unconditional_paths)
-                self.clip_image_embeds_unconditional = load_file(unconditional_path)
+                self.clip_image_embeds_unconditional = safe_load_file(unconditional_path)
 
             return
         clip_image_path = self.get_new_clip_image_path()
@@ -1790,7 +1791,7 @@ class LatentCachingFileItemDTOMixin:
             return None
         if self._encoded_latent is None:
             # load it from disk
-            state_dict = load_file(
+            state_dict = safe_load_file(
                 self.get_latent_path(),
                 # device=device if device is not None else self.latent_load_device
                 device='cpu'
@@ -1836,7 +1837,7 @@ class LatentCachingMixin:
                 if os.path.exists(latent_path):
                     if to_memory:
                         # load it into memory
-                        state_dict = load_file(latent_path, device='cpu')
+                        state_dict = safe_load_file(latent_path, device='cpu')
                         file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
                         if 'first_frame_latent' in state_dict:
                             file_item._cached_first_frame_latent = state_dict['first_frame_latent'].to('cpu', dtype=self.sd.torch_dtype)
