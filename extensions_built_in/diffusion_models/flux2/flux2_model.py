@@ -137,15 +137,38 @@ class Flux2Model(BaseModel):
             transformer = Flux2(self.get_flux2_params())
 
         # use local path if provided
-        if os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
+        if os.path.isdir(transformer_path):
+            te_candidates = getattr(self, "flux2_te_filenames", None) or [self.flux2_te_filename]
+            for fn in te_candidates:
+                p = os.path.join(transformer_path, fn)
+                if os.path.isfile(p):
+                    transformer_path = p
+                    break
+        elif os.path.exists(os.path.join(transformer_path, self.flux2_te_filename)):
             transformer_path = os.path.join(transformer_path, self.flux2_te_filename)
 
         if not os.path.exists(transformer_path):
             # assume it is from the hub
-            transformer_path = huggingface_hub.hf_hub_download(
-                repo_id=model_path,
-                filename=self.flux2_te_filename,
-                token=HF_TOKEN,
+            te_candidates = getattr(self, "flux2_te_filenames", None) or [self.flux2_te_filename]
+            last_err = None
+            for fn in te_candidates:
+                try:
+                    transformer_path = huggingface_hub.hf_hub_download(
+                        repo_id=model_path,
+                        filename=fn,
+                        token=HF_TOKEN,
+                    )
+                    last_err = None
+                    break
+                except Exception as err:
+                    last_err = err
+            if last_err is not None:
+                raise last_err
+        elif os.path.isdir(transformer_path):
+            te_candidates = getattr(self, "flux2_te_filenames", None) or [self.flux2_te_filename]
+            raise FileNotFoundError(
+                f"Flux2 transformer weights not found under directory: {transformer_path}. "
+                f"Tried: {', '.join(te_candidates)}"
             )
 
         transformer_state_dict = safe_load_file(transformer_path, device="cpu")

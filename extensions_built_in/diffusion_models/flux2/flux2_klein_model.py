@@ -101,7 +101,14 @@ class Flux2Klein4BModel(Flux2KleinModel):
 class Flux2Klein9BModel(Flux2KleinModel):
     arch = "flux2_klein_9b"
     flux2_klein_te_path: str = "Qwen/Qwen3-8B"
+    # Default to base model filename for backwards-compatibility, but allow distilled too.
     flux2_te_filename: str = "flux-2-klein-base-9b.safetensors"
+    # When `name_or_path` is a local directory or a repo with a different filename, Flux2Model
+    # will try these in order and pick the first that exists / downloads successfully.
+    flux2_te_filenames: list[str] = [
+        "flux-2-klein-base-9b.safetensors",
+        "flux-2-klein-9b.safetensors",
+    ]
 
     def get_flux2_params(self):
         return Klein9BParams()
