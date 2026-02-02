@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import errno
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 def safe_load_file(path: str, device: str = "cpu") -> Dict[str, Any]:
@@ -18,9 +18,13 @@ def safe_load_file(path: str, device: str = "cpu") -> Dict[str, Any]:
     try:
         return load_file(path, device=device)
     except OSError as e:
-        # ENODEV == 19 ("No such device"): often indicates the underlying FS doesn't
-        # support mmap() for this file.
-        if getattr(e, "errno", None) not in (errno.ENODEV, 19):
+        # Some versions of safetensors (Rust -> Python) include the error code only
+        # in the message (e.g. "No such device (os error 19)") without setting
+        # e.errno. Handle both.
+        eno = getattr(e, "errno", None)
+        msg = str(e).lower()
+        is_enodev = (eno in (errno.ENODEV, 19)) or ("os error 19" in msg) or ("no such device" in msg)
+        if not is_enodev:
             raise
 
         # Fallback: load from raw bytes, which avoids mmap.
