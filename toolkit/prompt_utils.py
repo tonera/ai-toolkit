@@ -86,6 +86,16 @@ class PromptEmbeds:
         return prompt_embeds
 
     def expand_to_batch(self, batch_size):
+        def _expand_first_dim(t: torch.Tensor, new_batch: int) -> torch.Tensor:
+            """
+            Expand tensor on batch dimension (dim=0) from 1 -> new_batch.
+            Keeps remaining dims unchanged.
+            """
+            if t.dim() < 1:
+                raise ValueError(f"Cannot expand tensor with dim={t.dim()}")
+            # expand expects a size for every dimension
+            return t.expand(new_batch, *([-1] * (t.dim() - 1)))
+
         pe = self.clone()
         if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
             if len(pe.text_embeds[0].shape) == 2:
@@ -103,16 +113,16 @@ class PromptEmbeds:
                 # batch is a list of tensors
                 pe.text_embeds = pe.text_embeds * batch_size
             else:
-                pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
+                pe.text_embeds = [_expand_first_dim(t, batch_size) for t in pe.text_embeds]
         else:
-            pe.text_embeds = pe.text_embeds.expand(batch_size, -1)
+            pe.text_embeds = _expand_first_dim(pe.text_embeds, batch_size)
         if pe.pooled_embeds is not None:
-            pe.pooled_embeds = pe.pooled_embeds.expand(batch_size, -1)
+            pe.pooled_embeds = _expand_first_dim(pe.pooled_embeds, batch_size)
         if pe.attention_mask is not None:
             if isinstance(pe.attention_mask, list) or isinstance(pe.attention_mask, tuple):
-                pe.attention_mask = [t.expand(batch_size, -1) for t in pe.attention_mask]
+                pe.attention_mask = [_expand_first_dim(t, batch_size) for t in pe.attention_mask]
             else:
-                pe.attention_mask = pe.attention_mask.expand(batch_size, -1)
+                pe.attention_mask = _expand_first_dim(pe.attention_mask, batch_size)
         return pe
 
     def save(self, path: str):
