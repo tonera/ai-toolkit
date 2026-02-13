@@ -307,6 +307,23 @@ class StableDiffusion:
 
         if self.model_config.vae_path is not None:
             load_args['vae'] = load_vae(self.model_config.vae_path, dtype)
+
+        # Allow passing extra kwargs through to diffusers loaders.
+        # Useful for offline single-file checkpoints, e.g.:
+        #   model_kwargs:
+        #     local_files_only: true
+        #     config: "/path/to/local/diffusers/sdxl-base"
+        #     original_config_file: "/path/to/original/config.yaml"
+        model_kwargs = {}
+        try:
+            if getattr(self.model_config, "model_kwargs", None):
+                model_kwargs = dict(self.model_config.model_kwargs)
+        except Exception:
+            model_kwargs = {}
+        # Don't allow overriding core arguments we set explicitly.
+        for k in ("device", "dtype", "torch_dtype", "use_safetensors", "scheduler", "vae"):
+            if k in model_kwargs:
+                del model_kwargs[k]
         if self.model_config.is_xl or self.model_config.is_ssd or self.model_config.is_vega:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
@@ -323,13 +340,16 @@ class StableDiffusion:
                     device=self.device_torch,
                     # variant="fp16",
                     use_safetensors=True,
-                    **load_args
+                    **load_args,
+                    **model_kwargs,
                 )
             else:
                 pipe = pipln.from_single_file(
                     model_path,
                     device=self.device_torch,
                     torch_dtype=self.torch_dtype,
+                    **load_args,
+                    **model_kwargs,
                 )
 
             if 'vae' in load_args and load_args['vae'] is not None:
