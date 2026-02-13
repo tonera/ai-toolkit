@@ -572,7 +572,14 @@ class SDTrainer(BaseSDTrainProcess):
             target = prior_pred
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
-            target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
+            # IMPORTANT:
+            # - get_velocity expects the clean sample (x0) in the SAME space as `noise`
+            # - for SD/SDXL training, this should be computed in LATENT space (not pixel-space images)
+            # - `batch.tensor` may be on CPU (or even None when using cached latents), which can cause device mismatch
+            x0 = batch.latents
+            if x0.device != noise.device:
+                x0 = x0.to(noise.device)
+            target = self.sd.noise_scheduler.get_velocity(x0, noise, timesteps)
         
         elif hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
