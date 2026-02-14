@@ -1,0 +1,160 @@
+---
+# 这是一个sdxl模型的角色lora训练配置，训练工具ai-toolkit，约35张角色图片，2-3套服装。希望固定角色典型特征，但允许角色换服装
+job: extension
+config:
+  # 训练任务名（会用于输出目录/模型名）
+  name: noobai_chr_zhouxia_lora_v2
+
+  process:
+    - type: diffusion_trainer
+      training_folder: output/noobai_chr_zhouxia
+      device: cuda:0
+
+      # 角色“名字/触发词”
+      trigger_word: "chr_zhouxia"
+
+      # LoRA 网络配置（rank/alpha）
+      network:
+        type: lora
+        # 你反馈“到 600 都学不到、到 750 才学到一部分且特征此消彼长”，这轮更像欠拟合
+        # rank 先回到 32，同时把 lr 调到更常见区间（下方），再靠密集保存挑最佳步数
+        linear: 64
+        linear_alpha: 32
+
+      save:
+        dtype: bf16
+        # 你这种“早期最好、后期变形”的情况，必须更密集保存以便挑选最佳步数（例如 200~400）
+        save_every: 50
+        max_step_saves_to_keep: 20
+        save_format: diffusers
+        push_to_hub: false
+
+      # 数据集：图片 + 同名 .txt caption（逗号分隔 tags）
+      # caption 内可写 "[trigger]"，会被 trigger_word 替换
+      datasets:
+        - folder_path: "/home/tonera/project/ai-toolkit/datasets/chr_zhouxia"
+          # 重要：用于在 caption 阶段把 "[trigger]" 真正替换成触发词（否则会被替换成空字符串）
+          trigger_word: "chr_zhouxia"
+          caption_ext: "txt"
+          buckets: true
+          # ai-toolkit 会把多分辨率拆成多个 dataset 条目
+          resolution: [768, 1024]
+          # 重复 10 次算一轮，避免 epoch 刷屏
+          num_repeats: 10
+
+          # 当图片没有 caption 时的兜底；也可用于“只写名字也像”的训练信号
+          # 建议只放“真正稳定”的角色固特征，避免把服装/身材等不稳定项锁死，或与数据冲突导致学不动
+          default_caption: "[trigger], 1girl, round face, bob cut, blonde hair, brown eyes"
+
+          # 让部分样本 caption 变空 → 训练中经常只剩 trigger → 推理时只写名字也更容易像
+          # 你这轮所有图都有 caption，所以 default_caption 不会参与；
+          # 这里的 dropout 主要作用是：偶尔把可变描述都拿掉，让模型“只靠 trigger 也要对齐身份”
+          caption_dropout_rate: 0.05
+
+          # 随机丢 token（尤其服装/背景等可变项）→ 避免把衣服锁死
+          # 为“换装鲁棒性”提高一点，让模型更少依赖服装词来认人
+          # 0.2 在“身份锚不够牢”时容易把关键身份 tag 丢掉，出现你说的“发型对了但别的没学/反过来”
+          token_dropout_rate: 0.05
+
+          # 保护前 N 个 token 不被 token dropout 丢掉
+          # [trigger] + 1girl + 4个固特征 = 6
+          # keep_tokens 过大容易把“恰好排在前面的可变词”也保护住，反而不利于换装
+          keep_tokens: 2
+          shuffle_tokens: true
+
+      train:
+        # 既然 250 左右最好，先把总步数收敛到 600 以内，更容易避免后期崩坏
+        # 欠拟合时把步数拉回 1000~1200，并用密集保存挑最佳点
+        steps: 2000
+        batch_size: 4
+        gradient_accumulation: 1
+        # 训练 dtype（TrainConfig 默认是 fp32；不显式设置会让整个训练以 float32 跑）
+        # bf16 通常更省显存且更快（需硬件支持）
+        dtype: bf16
+        # 你当前表现非常像“lr 偏大导致很快过训练”，先把 lr 降一档
+        # 注：在当前 ai-toolkit 的 LoRA 训练路径里，优化器参数组主要使用 train.lr
+        # ai-toolkit 当前 LoRA 训练路径里，优化器参数组主要使用 train.lr
+        lr: 3.5e-5
+
+        train_unet: true
+        # 角色“像不像”很大程度取决于 trigger -> 语义绑定，通常需要少量训练 TE（尤其是你这种 500 步还不像的情况）
+        # 注意：开启 TE 训练后，若你是从旧配置的 500 步断点继续，可能无法无痛续训（参数组/优化器状态不同），更稳妥是从 0 重新跑一版
+        # train_text_encoder: true
+        train_refiner: false
+
+
+        noise_scheduler: "ddpm"
+        gradient_checkpointing: true
+        # xformers 在非常新的 GPU（如 capability=12.0）上可能没有可用算子，会直接报错
+        # 建议改用 PyTorch SDP（见下方 sdp: true）
+        xformers: false
+        sdp: true
+        optimizer: "adamw8bit"
+        lr_scheduler: "constant_with_warmup"
+        lr_warmup_steps: 100
+        optimizer_params:
+          weight_decay: 1e-4
+        # 主流 SDXL LoRA 会开 min_snr_gamma（常用 5），通常能更稳定、更快学到“身份特征”
+        min_snr_gamma: 5.0
+
+        # DOP（差分输出保持）：减少概念污染
+        # 注意：不能与 blank_prompt_preservation 同时启用
+        # 注意：启用 DOP 时不能 cache_text_embeddings
+        # 你的现象“500 步仍不像 + 画面偏灰暗”，优先怀疑 DOP 把 LoRA 变化压得太小（而且 DOP 还禁止训练 TE）
+        # 建议先关掉，等角色稳定后再用更小 multiplier 开一轮“保守微调”
+        diff_output_preservation: false
+        diff_output_preservation_class: "1girl"
+        # DOP loss 太强会压制角色学习；小数据集建议先降低
+        diff_output_preservation_multiplier: 0.5
+        blank_prompt_preservation: false
+
+        cache_text_embeddings: false
+        unload_text_encoder: true
+
+      model:
+        # NoobAI（SDXL）底模：可以是本地 safetensors 或 HF diffusers repo
+        name_or_path: "/home/tonera/models/oneObsession_v16Noobai.safetensors"
+        arch: "sdxl"
+        is_xl: true
+        # 如果你的底模确实是 v-prediction（模型输出 v），需要打开这个开关，
+        # 训练时 loss target 会自动切到 velocity（get_velocity），并把 scheduler.prediction_type 设为 v_prediction
+        is_v_pred: false
+        dtype: bf16
+
+        # 关键：把 SDXL base 的 diffusers 目录指给 diffusers 当配置来源，并且只用本地文件
+        model_kwargs:
+          local_files_only: true
+          config: "/home/tonera/models/oneObsession_v16Noobai"
+
+      # 训练中采样（用于验收：只写名字、换装、换构图）
+      sample:
+        sample_every: 200
+        width: 1024
+        height: 1024
+        # ddpm 作为采样器在少步数下很容易出现“线稿/草图感”
+        # 换成更常用的采样器以便正确评估训练效果
+        sampler: "euler_a"
+        # 用 samples 便于做“同 prompt 下 LoRA 开/关”的对照。
+        # 由于你实际推理最佳 guidance_scale=1.5，这里采样验收也统一使用 1.5，避免出现“采样好看但落地不行”的偏差。
+        samples:
+          # LoRA（开）：同 prompt、同 seed
+          - prompt: "[trigger], sakimichan, 1girl, portrait, smile"
+            guidance_scale: 5
+            sample_steps: 30
+            network_multiplier: 1.0
+          # 换装压力测试（覆盖不同服装先验，而不是只盯某一个词）
+          - prompt: "[trigger], sakimichan, 1girl, armor"
+            guidance_scale: 5
+            sample_steps: 30
+            network_multiplier: 1.0
+          - prompt: "[trigger], sakimichan, 1girl, hoodie"
+            guidance_scale: 5
+            sample_steps: 30
+            network_multiplier: 1.0
+          - prompt: "[trigger], sakimichan, 1girl, dress"
+            guidance_scale: 5
+            sample_steps: 30
+            network_multiplier: 1.0
+        neg: "worst quality, low quality, extra fingers"
+        seed: 42
+
